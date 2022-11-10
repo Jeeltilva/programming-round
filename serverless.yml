@@ -1,0 +1,104 @@
+service: demo
+
+plugins:
+  - serverless-webpack
+  - serverless-offline
+  - serverless-pseudo-parameters
+  # DynamoDB Local start
+  - serverless-dynamodb-local
+  # DynamoDB Local end
+
+provider:
+  name: aws
+  runtime: nodejs14.x
+  memorySize: 256
+  stage: ${opt:stage, 'dev'}
+  region: 'us-east-2'
+  environment:
+    USERS_TABLE_NAME: ${self:custom.tableName}
+  iamRoleStatements:
+    - Effect: Allow
+      Action: 
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:Query
+        - dynamodb:BatchWriteItem
+      Resource: 
+         - Fn::GetAtt: [ usersTable, Arn ]
+         - !Join ['/', [ '${self:custom.tableArn}', 'index', 'nameAndDateJoined']]
+
+resources:
+  Resources:
+    usersTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.tableName}
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: N
+          - AttributeName: firstName
+            AttributeType: S
+          - AttributeName: dateJoined
+            AttributeType: N
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        GlobalSecondaryIndexes: 
+          - IndexName: nameAndDateJoined
+            KeySchema:
+              - AttributeName: dateJoined
+                KeyType: HASH
+              - AttributeName: firstName
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+            ProvisionedThroughput:
+              ReadCapacityUnits: 5
+              WriteCapacityUnits: 5
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+
+
+functions:
+  getById:
+    handler: src/handlers/getById.handler
+    events:
+      - http:
+          method: GET
+          path: /user/{id}
+    timeout: 900
+
+  getByDateJoined:
+    handler: src/handlers/getByIndex.handler
+    events:
+      - http:
+          method: GET
+          path: /userByDateJoined/{dateJoined}
+
+  batchMigrateData:
+    handler: src/handlers/batchMigrateData.handler
+
+custom:
+  tableName: 'usersTable-${sls:stage}'
+  tableArn: !GetAtt usersTable.Arn
+  dynamodb:
+  # If you only want to use DynamoDB Local in some stages, declare them here
+    stages:
+      - dev
+    start:
+      port: 8000
+      inMemory: true
+      heapInitial: 200m
+      heapMax: 1g
+      migrate: true
+      seed: true
+      convertEmptyValues: true
+    # Uncomment only if you already have a DynamoDB running locally
+    # noStart: true
+    seed:
+      User:
+        sources:
+          - table: ${self:custom.tableName}
+            sources: [./src/Data/data.json]
